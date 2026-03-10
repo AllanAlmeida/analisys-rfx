@@ -19,6 +19,15 @@ func TestAnalyzeInvestmentRequestValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "valid lci prefixado with pre modality",
+			req: AnalyzeInvestmentRequest{
+				Type:     "LCI",
+				Rate:     11.7,
+				Index:    "PREFIXADO",
+				Modality: "PRE",
+			},
+		},
+		{
 			name: "missing type",
 			req: AnalyzeInvestmentRequest{
 				Rate: 100,
@@ -41,6 +50,26 @@ func TestAnalyzeInvestmentRequestValidate(t *testing.T) {
 				Index: "IPCA",
 			},
 			wantErr: ErrInvalidIndex,
+		},
+		{
+			name: "invalid modality",
+			req: AnalyzeInvestmentRequest{
+				Type:     "CDB",
+				Rate:     110,
+				Index:    "CDI",
+				Modality: "PRE",
+			},
+			wantErr: ErrInvalidModality,
+		},
+		{
+			name: "invalid maturity date",
+			req: AnalyzeInvestmentRequest{
+				Type:         "CDB",
+				Rate:         110,
+				Index:        "CDI",
+				MaturityDate: "13/08/2026",
+			},
+			wantErr: ErrInvalidMaturityDate,
 		},
 		{
 			name: "unsupported type",

@@ -34,6 +34,11 @@ Os indicadores econômicos (SELIC, IPCA e CDI) são buscados na API do Banco Cen
 - `time`
 - `github.com/go-chi/chi/v5`
 
+## Swagger (OpenAPI)
+
+- Arquivo: `docs/swagger.yaml`
+- Pode ser importado no Swagger Editor ou usado para gerar client/server stubs.
+
 ## Estrutura do projeto
 
 ```text
@@ -65,7 +70,9 @@ Request:
 {
   "type": "LCI",
   "rate": 95,
-  "index": "CDI"
+  "index": "CDI",
+  "modality": "POS",
+  "maturity_date": "2026-08-13"
 }
 ```
 
@@ -84,6 +91,148 @@ Response:
     "ipca": 5.2,
     "cdi": 10.4
   }
+}
+```
+
+Campos adicionais no body:
+
+- `modality` (opcional): `POS`, `PRE`, `IPCA` (default é inferido pelo tipo)
+- `maturity_date` (opcional): formato `YYYY-MM-DD`
+- `issuer` (opcional): emissor do produto (ex: `Banco BTG Pactual`)
+- Para `LCI/LCA`, também é aceito `index=PREFIXADO` com `modality=PRE`
+
+### `POST /analyze/batch`
+
+Analisa uma lista de investimentos em uma única chamada.
+
+Request:
+
+```json
+{
+  "items": [
+    {
+      "type": "LCI",
+      "rate": 11.77,
+      "index": "PREFIXADO",
+      "modality": "PRE",
+      "maturity_date": "2026-09-10",
+      "issuer": "Banco BTG Pactual"
+    },
+    {
+      "type": "CDB",
+      "rate": 120,
+      "index": "CDI",
+      "modality": "POS"
+    }
+  ]
+}
+```
+
+### `POST /analyze/batch/from/plaintxt`
+
+Recebe o texto bruto (copiado da corretora), transforma internamente em `items` e executa a análise em lote.
+
+Aceita:
+
+- `Content-Type: text/plain` com o texto direto no body
+- `Content-Type: application/json` com `{ "text": "..." }`
+
+No parse de plain text, o serviço extrai automaticamente o `issuer` de linhas como `LCI - Banco BTG Pactual`.
+
+Response:
+
+```json
+{
+  "parsed": 2,
+  "parse_failed": 0,
+  "parse_errors": [],
+  "batch": {
+    "total": 2,
+    "ok": 2,
+    "failed": 0,
+    "items": [
+      {
+        "index": 0,
+        "input": {
+          "type": "LCI",
+          "rate": 11.77,
+          "index": "PREFIXADO",
+          "modality": "PRE",
+          "maturity_date": "2026-09-10",
+          "issuer": "Banco BTG Pactual"
+        },
+        "result": {
+          "classification": "Excepcional",
+          "score": 10,
+          "equivalent_cdb": 138.47,
+          "equivalent_cdi_return": 117.7,
+          "real_return": 6.96,
+          "description": "LCI com 100% ou mais do CDI",
+          "indicators": {
+            "selic": 10.5,
+            "ipca": 5.2,
+            "cdi": 10
+          }
+        }
+      }
+    ]
+  }
+}
+```
+
+### `POST /analyze/batch/from/plaintxt/csv`
+
+Mesmo comportamento do endpoint anterior, mas o retorno vem em `text/csv` para importacao em planilhas.
+
+Colunas do CSV:
+
+- `index`
+- `type`
+- `issuer`
+- `rate`
+- `indexer`
+- `modality`
+- `maturity_date`
+- `classification`
+- `score`
+- `equivalent_cdb`
+- `equivalent_cdi_return`
+- `real_return`
+- `description`
+- `error`
+
+Response:
+
+```json
+{
+  "total": 2,
+  "ok": 2,
+  "failed": 0,
+  "items": [
+    {
+      "index": 0,
+      "input": {
+        "type": "LCI",
+        "rate": 11.77,
+        "index": "PREFIXADO",
+        "modality": "PRE",
+        "maturity_date": "2026-09-10"
+      },
+      "result": {
+        "classification": "Excepcional",
+        "score": 9.9,
+        "equivalent_cdb": 138.47,
+        "equivalent_cdi_return": 117.7,
+        "real_return": 6.96,
+        "description": "LCI com 100% ou mais do CDI",
+        "indicators": {
+          "selic": 10.5,
+          "ipca": 5.2,
+          "cdi": 10.0
+        }
+      }
+    }
+  ]
 }
 ```
 
@@ -149,7 +298,10 @@ curl -X POST http://localhost:8080/analyze \
 {
   "type": "CDB",
   "rate": 108,
-  "index": "CDI"
+  "index": "CDI",
+  "modality": "POS",
+  "maturity_date": "2026-08-13",
+  "issuer": "Banco Fator S/A"
 }
 ```
 
@@ -159,7 +311,10 @@ curl -X POST http://localhost:8080/analyze \
 {
   "type": "LCI",
   "rate": 102,
-  "index": "CDI"
+  "index": "CDI",
+  "modality": "POS",
+  "maturity_date": "2027-01-15",
+  "issuer": "Banco BTG Pactual"
 }
 ```
 
@@ -169,7 +324,9 @@ curl -X POST http://localhost:8080/analyze \
 {
   "type": "LCA",
   "rate": 87,
-  "index": "CDI"
+  "index": "CDI",
+  "modality": "POS",
+  "maturity_date": "2026-12-01"
 }
 ```
 
@@ -179,7 +336,9 @@ curl -X POST http://localhost:8080/analyze \
 {
   "type": "Tesouro Prefixado",
   "rate": 15.0,
-  "index": "Prefixado"
+  "index": "Prefixado",
+  "modality": "PRE",
+  "maturity_date": "2029-01-01"
 }
 ```
 
@@ -189,27 +348,56 @@ curl -X POST http://localhost:8080/analyze \
 {
   "type": "Tesouro IPCA+",
   "rate": 5.4,
-  "index": "IPCA"
+  "index": "IPCA",
+  "modality": "IPCA",
+  "maturity_date": "2035-05-15"
 }
 ```
 
 ## Mais exemplos de curl
 
 ```bash
+# Batch
+curl -X POST http://localhost:8080/analyze/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items":[
+      {"type":"LCI","rate":11.77,"index":"PREFIXADO","modality":"PRE","maturity_date":"2026-09-10"},
+      {"type":"LCA","rate":11.31,"index":"PREFIXADO","modality":"PRE","maturity_date":"2028-09-11"},
+      {"type":"CDB","rate":120,"index":"CDI","modality":"POS"}
+    ]
+  }'
+
+# Batch from plain text (text/plain)
+curl -X POST http://localhost:8080/analyze/batch/from/plaintxt \
+  -H "Content-Type: text/plain" \
+  --data-binary $'LCI - Banco BTG Pactual\nPré-Fixado\nConservador\nJuros no vencimento\n10/09/2026\nPrazo: 184 dias\n11,77% a.a.\t14,81% a.a.\tR$ 1.000,00\t-\nInvestir'
+
+# Batch from plain text (JSON)
+curl -X POST http://localhost:8080/analyze/batch/from/plaintxt \
+  -H "Content-Type: application/json" \
+  -d '{"text":"LCI - Banco BTG Pactual\nPré-Fixado\nConservador\nJuros no vencimento\n10/09/2026\nPrazo: 184 dias\n11,77% a.a.\t14,81% a.a.\tR$ 1.000,00\t-\nInvestir"}'
+
+# Batch from plain text -> CSV
+curl -X POST http://localhost:8080/analyze/batch/from/plaintxt/csv \
+  -H "Content-Type: text/plain" \
+  --data-binary @lista.txt \
+  -o analysis_batch.csv
+
 # LCI
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
-  -d '{"type":"LCI","rate":95,"index":"CDI"}'
+  -d '{"type":"LCI","rate":95,"index":"CDI","modality":"POS","maturity_date":"2026-08-13"}'
 
 # Tesouro Prefixado
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
-  -d '{"type":"Tesouro Prefixado","rate":14.7,"index":"Prefixado"}'
+  -d '{"type":"Tesouro Prefixado","rate":14.7,"index":"Prefixado","modality":"PRE","maturity_date":"2029-01-01"}'
 
 # Tesouro IPCA+
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
-  -d '{"type":"Tesouro IPCA+","rate":6.2,"index":"IPCA"}'
+  -d '{"type":"Tesouro IPCA+","rate":6.2,"index":"IPCA","modality":"IPCA","maturity_date":"2035-05-15"}'
 ```
 
 ## Docker

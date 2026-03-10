@@ -30,9 +30,9 @@ func (s *AnalyzerService) Analyze(ctx context.Context, req domain.AnalyzeInvestm
 		return domain.AnalyzeInvestmentResponse{}, err
 	}
 
-	classification, description := classify(req.Type, req.Rate)
-	equivalentCDB := calculateEquivalentCDB(req, indicators)
 	equivalentCDI := calculateEquivalentCDI(req, indicators)
+	classification, description := classify(req, equivalentCDI)
+	equivalentCDB := calculateEquivalentCDB(req, indicators, equivalentCDI)
 	realReturn := calculateRealReturn(req, indicators)
 	score := calculateScore(classification, req, indicators)
 
@@ -51,49 +51,58 @@ func (s *AnalyzerService) Analyze(ctx context.Context, req domain.AnalyzeInvestm
 	}, nil
 }
 
-func classify(investmentType string, rate float64) (string, string) {
-	switch strings.ToUpper(investmentType) {
+func classify(req domain.AnalyzeInvestmentRequest, equivalentCDI float64) (string, string) {
+	switch strings.ToUpper(req.Type) {
 	case domain.TypeCDB:
-		if rate >= 120 {
+		if req.Rate >= 120 {
 			return domain.ClassificationExceptional, "CDB com 120% ou mais do CDI"
 		}
-		if rate >= 105 {
+		if req.Rate >= 105 {
 			return domain.ClassificationGood, "CDB entre 105% e 119% do CDI"
 		}
-		if rate >= 100 {
+		if req.Rate >= 100 {
 			return domain.ClassificationAcceptable, "CDB entre 100% e 104% do CDI"
 		}
 		return domain.ClassificationWeak, "CDB abaixo de 100% do CDI"
 	case domain.TypeLCI, domain.TypeLCA:
-		if rate >= 100 {
-			return domain.ClassificationExceptional, fmt.Sprintf("%s com 100%% ou mais do CDI", investmentType)
+		if equivalentCDI >= 100 {
+			return domain.ClassificationExceptional, fmt.Sprintf("%s com 100%% ou mais do CDI", req.Type)
 		}
-		if rate >= 90 {
-			return domain.ClassificationGood, fmt.Sprintf("%s entre 90%% e 99%% do CDI", investmentType)
+		if equivalentCDI >= 90 {
+			if req.Index == domain.IndexPrefixado {
+				return domain.ClassificationGood, fmt.Sprintf("%s pre-fixado equivalente entre 90%% e 99%% do CDI", req.Type)
+			}
+			return domain.ClassificationGood, fmt.Sprintf("%s entre 90%% e 99%% do CDI", req.Type)
 		}
-		if rate >= 85 {
-			return domain.ClassificationAcceptable, fmt.Sprintf("%s entre 85%% e 89%% do CDI", investmentType)
+		if equivalentCDI >= 85 {
+			if req.Index == domain.IndexPrefixado {
+				return domain.ClassificationAcceptable, fmt.Sprintf("%s pre-fixado equivalente entre 85%% e 89%% do CDI", req.Type)
+			}
+			return domain.ClassificationAcceptable, fmt.Sprintf("%s entre 85%% e 89%% do CDI", req.Type)
 		}
-		return domain.ClassificationWeak, fmt.Sprintf("%s abaixo de 85%% do CDI", investmentType)
+		if req.Index == domain.IndexPrefixado {
+			return domain.ClassificationWeak, fmt.Sprintf("%s pre-fixado equivalente abaixo de 85%% do CDI", req.Type)
+		}
+		return domain.ClassificationWeak, fmt.Sprintf("%s abaixo de 85%% do CDI", req.Type)
 	case domain.TypeTesouroPrefixado:
-		if rate >= 15.5 {
+		if req.Rate >= 15.5 {
 			return domain.ClassificationExceptional, "Tesouro Prefixado com taxa >= 15.5%"
 		}
-		if rate >= 14.5 {
+		if req.Rate >= 14.5 {
 			return domain.ClassificationGood, "Tesouro Prefixado entre 14.5% e 15.4%"
 		}
-		if rate >= 13.5 {
+		if req.Rate >= 13.5 {
 			return domain.ClassificationAcceptable, "Tesouro Prefixado entre 13.5% e 14.4%"
 		}
 		return domain.ClassificationWeak, "Tesouro Prefixado abaixo de 13.5%"
 	case domain.TypeTesouroIPCA:
-		if rate >= 6.5 {
+		if req.Rate >= 6.5 {
 			return domain.ClassificationExceptional, "Tesouro IPCA+ com taxa real >= 6.5%"
 		}
-		if rate >= 5.8 {
+		if req.Rate >= 5.8 {
 			return domain.ClassificationGood, "Tesouro IPCA+ entre 5.8% e 6.4%"
 		}
-		if rate >= 5.0 {
+		if req.Rate >= 5.0 {
 			return domain.ClassificationAcceptable, "Tesouro IPCA+ entre 5.0% e 5.7%"
 		}
 		return domain.ClassificationWeak, "Tesouro IPCA+ abaixo de 5.0%"
@@ -102,9 +111,12 @@ func classify(investmentType string, rate float64) (string, string) {
 	}
 }
 
-func calculateEquivalentCDB(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
+func calculateEquivalentCDB(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators, equivalentCDI float64) float64 {
 	switch req.Type {
 	case domain.TypeLCI, domain.TypeLCA:
+		if req.Index == domain.IndexPrefixado {
+			return utils.EquivalentCDBForTaxFree(equivalentCDI)
+		}
 		return utils.EquivalentCDBForTaxFree(req.Rate)
 	case domain.TypeCDB:
 		return req.Rate
@@ -126,7 +138,15 @@ func calculateEquivalentCDB(req domain.AnalyzeInvestmentRequest, indicators Econ
 
 func calculateEquivalentCDI(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
 	switch req.Type {
-	case domain.TypeCDB, domain.TypeLCI, domain.TypeLCA:
+	case domain.TypeCDB:
+		return req.Rate
+	case domain.TypeLCI, domain.TypeLCA:
+		if req.Index == domain.IndexPrefixado {
+			if indicators.CDI == 0 {
+				return 0
+			}
+			return (req.Rate / indicators.CDI) * 100
+		}
 		return req.Rate
 	case domain.TypeTesouroPrefixado:
 		if indicators.CDI == 0 {
@@ -164,11 +184,16 @@ func calculateScore(classification string, req domain.AnalyzeInvestmentRequest, 
 	extra := 0.0
 
 	if req.Type == domain.TypeCDB || req.Type == domain.TypeLCI || req.Type == domain.TypeLCA {
-		if req.Rate >= 120 {
+		baseRate := req.Rate
+		if req.Index == domain.IndexPrefixado {
+			baseRate = calculateEquivalentCDI(req, indicators)
+		}
+
+		if baseRate >= 120 {
 			extra += 0.5
-		} else if req.Rate >= 110 {
+		} else if baseRate >= 110 {
 			extra += 0.3
-		} else if req.Rate >= 100 {
+		} else if baseRate >= 100 {
 			extra += 0.1
 		}
 	}

@@ -1,0 +1,314 @@
+openapi: 3.0.3
+info:
+  title: Investment Analyzer API
+  version: 1.0.0
+  description: API para analise de investimentos de renda fixa brasileira.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: API online
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+  /analyze:
+    post:
+      summary: Analisa um investimento
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeInvestmentRequest'
+            examples:
+              cdb:
+                value:
+                  type: CDB
+                  rate: 120
+                  index: CDI
+                  modality: POS
+                  maturity_date: '2026-08-13'
+                  issuer: Banco Fator S/A
+      responses:
+        '200':
+          description: Analise concluida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeInvestmentResponse'
+        '400':
+          description: Erro de validacao
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Erro interno
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /analyze/batch:
+    post:
+      summary: Analisa varios investimentos em lote
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeBatchRequest'
+      responses:
+        '200':
+          description: Analise em lote concluida
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeBatchResponse'
+        '400':
+          description: Erro de validacao
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /analyze/batch/from/plaintxt:
+    post:
+      summary: Converte texto da corretora para lote e analisa
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              example: |
+                LCI - Banco BTG Pactual
+                Pré-Fixado
+                10/09/2026
+                11,77% a.a.
+                Investir
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlainTextBatchPayload'
+      responses:
+        '200':
+          description: Parse e analise concluidos
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlainTextBatchResponse'
+        '400':
+          description: Texto invalido ou vazio
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - type: object
+                    properties:
+                      error:
+                        type: string
+                      parse_errors:
+                        type: array
+                        items:
+                          type: string
+  /analyze/batch/from/plaintxt/csv:
+    post:
+      summary: Converte texto da corretora para lote, analisa e retorna CSV
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+              example: |
+                LCI - Banco BTG Pactual
+                Pré-Fixado
+                10/09/2026
+                11,77% a.a.
+                Investir
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlainTextBatchPayload'
+      responses:
+        '200':
+          description: CSV gerado com resultado por item
+          content:
+            text/csv:
+              schema:
+                type: string
+                example: |
+                  index;type;issuer;rate;indexer;modality;maturity_date;classification;score;equivalent_cdb;equivalent_cdi_return;real_return;description;error
+                  0;LCI;Banco BTG Pactual;11.77;PREFIXADO;PRE;2026-09-10;Excepcional;10.00;138.47;117.70;6.96;LCI com 100% ou mais do CDI;
+        '400':
+          description: Texto invalido ou vazio
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    AnalyzeInvestmentRequest:
+      type: object
+      required:
+        - type
+        - rate
+      properties:
+        type:
+          type: string
+          description: Tipo de investimento
+          enum:
+            - CDB
+            - LCI
+            - LCA
+            - Tesouro Prefixado
+            - Tesouro IPCA+
+          example: LCI
+        rate:
+          type: number
+          format: double
+          description: Taxa em percentual
+          example: 95
+        index:
+          type: string
+          description: Indexador da taxa
+          enum:
+            - CDI
+            - PREFIXADO
+            - IPCA
+          example: CDI
+        modality:
+          type: string
+          description: Modalidade da taxa
+          enum:
+            - POS
+            - PRE
+            - IPCA
+          example: POS
+        maturity_date:
+          type: string
+          format: date
+          description: Data de vencimento (YYYY-MM-DD)
+          example: '2026-08-13'
+        issuer:
+          type: string
+          description: Emissor do investimento
+          example: Banco BTG Pactual
+    AnalyzeInvestmentResponse:
+      type: object
+      properties:
+        classification:
+          type: string
+          enum:
+            - Excepcional
+            - Bom
+            - Aceitável
+            - Fraco
+          example: Bom
+        score:
+          type: number
+          format: double
+          example: 8.3
+        equivalent_cdb:
+          type: number
+          format: double
+          example: 111.76
+        equivalent_cdi_return:
+          type: number
+          format: double
+          example: 95
+        real_return:
+          type: number
+          format: double
+          example: 3.85
+        description:
+          type: string
+          example: LCI entre 90% e 99% do CDI
+        indicators:
+          $ref: '#/components/schemas/Indicators'
+    Indicators:
+      type: object
+      properties:
+        selic:
+          type: number
+          format: double
+        ipca:
+          type: number
+          format: double
+        cdi:
+          type: number
+          format: double
+    AnalyzeBatchRequest:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnalyzeInvestmentRequest'
+    AnalyzeBatchItemResult:
+      type: object
+      properties:
+        index:
+          type: integer
+          example: 0
+        input:
+          $ref: '#/components/schemas/AnalyzeInvestmentRequest'
+        result:
+          $ref: '#/components/schemas/AnalyzeInvestmentResponse'
+        error:
+          type: string
+          example: invalid index for investment type
+    AnalyzeBatchResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+          example: 2
+        ok:
+          type: integer
+          example: 1
+        failed:
+          type: integer
+          example: 1
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnalyzeBatchItemResult'
+    PlainTextBatchPayload:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          description: Texto bruto copiado da corretora
+    PlainTextBatchResponse:
+      type: object
+      properties:
+        parsed:
+          type: integer
+          example: 10
+        parse_failed:
+          type: integer
+          example: 1
+        parse_errors:
+          type: array
+          items:
+            type: string
+        batch:
+          $ref: '#/components/schemas/AnalyzeBatchResponse'
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: field 'rate' must be greater than 0

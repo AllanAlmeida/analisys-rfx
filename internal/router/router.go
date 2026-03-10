@@ -21,6 +21,9 @@ func New(investmentHandler *handler.InvestmentHandler) http.Handler {
 
 	r.Get("/health", investmentHandler.Health)
 	r.Post("/analyze", investmentHandler.Analyze)
+	r.Post("/analyze/batch", investmentHandler.AnalyzeBatch)
+	r.Post("/analyze/batch/from/plaintxt", investmentHandler.AnalyzeBatchFromPlainText)
+	r.Post("/analyze/batch/from/plaintxt/csv", investmentHandler.AnalyzeBatchFromPlainTextCSV)
 
 	return r
 }
