@@ -88,7 +88,7 @@ type bcbEntry struct {
 }
 
 func (s *BCBEconomyService) fetchLatestValue(ctx context.Context, seriesCode int) (float64, error) {
-	url := fmt.Sprintf("%s/%d/dados/ultimos/1?formato=json", bcbBaseURL, seriesCode)
+	url := fmt.Sprintf("%s.%d/dados/ultimos/1?formato=json", bcbBaseURL, seriesCode)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err

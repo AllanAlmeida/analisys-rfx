@@ -141,6 +141,77 @@ curl -X POST http://localhost:8080/analyze \
   }'
 ```
 
+## Variações de body (POST /analyze)
+
+### CDB (Bom)
+
+```json
+{
+  "type": "CDB",
+  "rate": 108,
+  "index": "CDI"
+}
+```
+
+### LCI (Excepcional)
+
+```json
+{
+  "type": "LCI",
+  "rate": 102,
+  "index": "CDI"
+}
+```
+
+### LCA (Aceitável)
+
+```json
+{
+  "type": "LCA",
+  "rate": 87,
+  "index": "CDI"
+}
+```
+
+### Tesouro Prefixado (Bom)
+
+```json
+{
+  "type": "Tesouro Prefixado",
+  "rate": 15.0,
+  "index": "Prefixado"
+}
+```
+
+### Tesouro IPCA+ (Aceitável)
+
+```json
+{
+  "type": "Tesouro IPCA+",
+  "rate": 5.4,
+  "index": "IPCA"
+}
+```
+
+## Mais exemplos de curl
+
+```bash
+# LCI
+curl -X POST http://localhost:8080/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"type":"LCI","rate":95,"index":"CDI"}'
+
+# Tesouro Prefixado
+curl -X POST http://localhost:8080/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"type":"Tesouro Prefixado","rate":14.7,"index":"Prefixado"}'
+
+# Tesouro IPCA+
+curl -X POST http://localhost:8080/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"type":"Tesouro IPCA+","rate":6.2,"index":"IPCA"}'
+```
+
 ## Docker
 
 Build:
