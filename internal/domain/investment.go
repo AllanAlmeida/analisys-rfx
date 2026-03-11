@@ -10,6 +10,7 @@ const (
 	TypeCDB              = "CDB"
 	TypeLCI              = "LCI"
 	TypeLCA              = "LCA"
+	TypeTesouroSelic     = "TESOURO SELIC"
 	TypeTesouroPrefixado = "TESOURO PREFIXADO"
 	TypeTesouroIPCA      = "TESOURO IPCA+"
 )
@@ -25,6 +26,7 @@ var (
 
 const (
 	IndexCDI       = "CDI"
+	IndexSELIC     = "SELIC"
 	IndexPrefixado = "PREFIXADO"
 	IndexIPCA      = "IPCA"
 )
@@ -144,6 +146,19 @@ func (r *AnalyzeInvestmentRequest) Validate() error {
 			r.Modality = ModalityPRE
 		}
 		if r.Modality != ModalityPRE {
+			return ErrInvalidModality
+		}
+	case TypeTesouroSelic:
+		if r.Index == "" {
+			r.Index = IndexSELIC
+		}
+		if r.Index != IndexSELIC {
+			return ErrInvalidIndex
+		}
+		if r.Modality == "" {
+			r.Modality = ModalityPOS
+		}
+		if r.Modality != ModalityPOS {
 			return ErrInvalidModality
 		}
 	case TypeTesouroIPCA:

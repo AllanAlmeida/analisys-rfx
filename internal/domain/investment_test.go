@@ -28,6 +28,13 @@ func TestAnalyzeInvestmentRequestValidate(t *testing.T) {
 			},
 		},
 		{
+			name: "valid tesouro selic defaults index to SELIC",
+			req: AnalyzeInvestmentRequest{
+				Type: "Tesouro Selic",
+				Rate: 0.09,
+			},
+		},
+		{
 			name: "missing type",
 			req: AnalyzeInvestmentRequest{
 				Rate: 100,

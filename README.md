@@ -12,6 +12,7 @@ Tipos suportados:
 - CDB
 - LCI
 - LCA
+- Tesouro Selic
 - Tesouro Prefixado
 - Tesouro IPCA+
 
@@ -252,6 +253,13 @@ Response:
 - `85% - 89% CDI`: Aceitável
 - `< 85% CDI`: Fraco
 
+### Tesouro Selic
+
+- `>= 0.15% a.a. de spread sobre a SELIC`: Excepcional
+- `0.05% - 0.14% a.a. de spread`: Bom
+- `0.00% - 0.04% a.a. de spread`: Aceitável
+- `< 0.00% a.a. de spread`: Fraco
+
 ### Tesouro Prefixado
 
 - `>= 15.5%`: Excepcional
@@ -342,6 +350,18 @@ curl -X POST http://localhost:8080/analyze \
 }
 ```
 
+### Tesouro Selic (Bom)
+
+```json
+{
+  "type": "Tesouro Selic",
+  "rate": 0.09,
+  "index": "SELIC",
+  "modality": "POS",
+  "maturity_date": "2031-03-01"
+}
+```
+
 ### Tesouro IPCA+ (Aceitável)
 
 ```json
@@ -393,6 +413,11 @@ curl -X POST http://localhost:8080/analyze \
 curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
   -d '{"type":"Tesouro Prefixado","rate":14.7,"index":"Prefixado","modality":"PRE","maturity_date":"2029-01-01"}'
+
+# Tesouro Selic
+curl -X POST http://localhost:8080/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"type":"Tesouro Selic","rate":0.09,"index":"SELIC","modality":"POS","maturity_date":"2031-03-01"}'
 
 # Tesouro IPCA+
 curl -X POST http://localhost:8080/analyze \

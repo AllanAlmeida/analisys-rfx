@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,6 +19,11 @@ type EconomyIndicators struct {
 	IPCA  float64
 	CDI   float64
 }
+
+const (
+	monthlyPeriodsPerYear = 12
+	businessDaysPerYear   = 252
+)
 
 type EconomyService interface {
 	GetIndicators(ctx context.Context) (EconomyIndicators, error)
@@ -73,9 +79,9 @@ func (s *BCBEconomyService) GetIndicators(ctx context.Context) (EconomyIndicator
 	}
 
 	s.indicators = EconomyIndicators{
-		SELIC: selic,
-		IPCA:  ipca,
-		CDI:   cdi,
+		SELIC: normalizeSELIC(selic),
+		IPCA:  annualizePeriodicRate(ipca, monthlyPeriodsPerYear),
+		CDI:   annualizePeriodicRate(cdi, businessDaysPerYear),
 	}
 	s.cachedAt = time.Now()
 
@@ -120,4 +126,17 @@ func (s *BCBEconomyService) fetchLatestValue(ctx context.Context, seriesCode int
 	}
 
 	return value, nil
+}
+
+func normalizeSELIC(value float64) float64 {
+	return value
+}
+
+func annualizePeriodicRate(periodicRate float64, periodsPerYear float64) float64 {
+	if periodicRate <= -100 {
+		return periodicRate
+	}
+
+	factor := 1 + periodicRate/100
+	return (math.Pow(factor, periodsPerYear) - 1) * 100
 }

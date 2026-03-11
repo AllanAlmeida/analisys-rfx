@@ -11,8 +11,10 @@ import (
 )
 
 var (
-	dateRegex = regexp.MustCompile(`\b(\d{2}/\d{2}/\d{4})\b`)
-	rateRegex = regexp.MustCompile(`(\d{1,2},\d{1,2})%\s*a\.a\.`)
+	dateRegex        = regexp.MustCompile(`\b(\d{2}/\d{2}/\d{4})\b`)
+	annualRateRegex  = regexp.MustCompile(`(\d{1,3},\d{1,4})%\s*a\.a\.`)
+	cdiRateRegex     = regexp.MustCompile(`(\d{1,3},\d{1,4})%\s*do\s*CDI`)
+	percentRateRegex = regexp.MustCompile(`(\d{1,3},\d{1,4})%`)
 )
 
 func ParsePlainTextBatch(raw string) ([]domain.AnalyzeInvestmentRequest, []string) {
@@ -60,6 +62,10 @@ func collectProductBlocks(lines []string) []string {
 			flush()
 		}
 
+		if len(current) == 0 && !isProductStartLine(line) {
+			continue
+		}
+
 		current = append(current, line)
 		if strings.EqualFold(line, "Investir") {
 			flush()
@@ -84,6 +90,7 @@ func isProductStartLine(line string) bool {
 	return strings.HasPrefix(upper, "LCI") ||
 		strings.HasPrefix(upper, "LCA") ||
 		strings.HasPrefix(upper, "CDB") ||
+		strings.HasPrefix(upper, "TESOURO SELIC") ||
 		strings.HasPrefix(upper, "TESOURO PREFIXADO") ||
 		strings.HasPrefix(upper, "TESOURO IPCA+")
 }
@@ -97,12 +104,13 @@ func parseProductBlock(block string) (domain.AnalyzeInvestmentRequest, error) {
 	}
 	issuer := extractIssuer(lines)
 
-	rate, err := extractRate(lines)
+	modality, index := extractModalityAndIndex(lines, investmentType)
+
+	rate, err := extractRate(lines, index)
 	if err != nil {
 		return domain.AnalyzeInvestmentRequest{}, err
 	}
 
-	modality, index := extractModalityAndIndex(lines, investmentType)
 	maturityDate, err := extractMaturityDate(lines)
 	if err != nil {
 		return domain.AnalyzeInvestmentRequest{}, err
@@ -128,6 +136,8 @@ func extractInvestmentType(lines []string) (string, error) {
 			return domain.TypeLCA, nil
 		case strings.HasPrefix(upper, "CDB"):
 			return domain.TypeCDB, nil
+		case strings.HasPrefix(upper, "TESOURO SELIC"):
+			return domain.TypeTesouroSelic, nil
 		case strings.HasPrefix(upper, "TESOURO PREFIXADO"):
 			return domain.TypeTesouroPrefixado, nil
 		case strings.HasPrefix(upper, "TESOURO IPCA+"):
@@ -154,19 +164,29 @@ func extractIssuer(lines []string) string {
 	return ""
 }
 
-func extractRate(lines []string) (float64, error) {
-	for _, line := range lines {
-		match := rateRegex.FindStringSubmatch(line)
-		if len(match) < 2 {
-			continue
-		}
+func extractRate(lines []string, index string) (float64, error) {
+	regexes := []*regexp.Regexp{annualRateRegex, cdiRateRegex, percentRateRegex}
+	switch index {
+	case domain.IndexCDI:
+		regexes = []*regexp.Regexp{cdiRateRegex, annualRateRegex, percentRateRegex}
+	case domain.IndexIPCA, domain.IndexPrefixado:
+		regexes = []*regexp.Regexp{annualRateRegex, percentRateRegex, cdiRateRegex}
+	}
 
-		rateString := strings.ReplaceAll(match[1], ",", ".")
-		rate, err := strconv.ParseFloat(rateString, 64)
-		if err != nil {
-			return 0, fmt.Errorf("invalid rate %q", match[1])
+	for _, line := range lines {
+		for _, rx := range regexes {
+			match := rx.FindStringSubmatch(line)
+			if len(match) < 2 {
+				continue
+			}
+
+			rateString := strings.ReplaceAll(match[1], ",", ".")
+			rate, err := strconv.ParseFloat(rateString, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid rate %q", match[1])
+			}
+			return rate, nil
 		}
-		return rate, nil
 	}
 	return 0, fmt.Errorf("could not identify rate")
 }
@@ -188,6 +208,10 @@ func extractMaturityDate(lines []string) (string, error) {
 }
 
 func extractModalityAndIndex(lines []string, investmentType string) (string, string) {
+	if investmentType == domain.TypeTesouroSelic {
+		return domain.ModalityPOS, domain.IndexSELIC
+	}
+
 	for _, line := range lines {
 		upper := strings.ToUpper(line)
 

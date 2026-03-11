@@ -84,6 +84,17 @@ func classify(req domain.AnalyzeInvestmentRequest, equivalentCDI float64) (strin
 			return domain.ClassificationWeak, fmt.Sprintf("%s pre-fixado equivalente abaixo de 85%% do CDI", req.Type)
 		}
 		return domain.ClassificationWeak, fmt.Sprintf("%s abaixo de 85%% do CDI", req.Type)
+	case domain.TypeTesouroSelic:
+		if req.Rate >= 0.15 {
+			return domain.ClassificationExceptional, "Tesouro Selic com spread >= 0.15% a.a."
+		}
+		if req.Rate >= 0.05 {
+			return domain.ClassificationGood, "Tesouro Selic com spread entre 0.05% e 0.14% a.a."
+		}
+		if req.Rate >= 0 {
+			return domain.ClassificationAcceptable, "Tesouro Selic com spread entre 0.00% e 0.04% a.a."
+		}
+		return domain.ClassificationWeak, "Tesouro Selic com spread abaixo de 0.00% a.a."
 	case domain.TypeTesouroPrefixado:
 		if req.Rate >= 15.5 {
 			return domain.ClassificationExceptional, "Tesouro Prefixado com taxa >= 15.5%"
@@ -120,6 +131,11 @@ func calculateEquivalentCDB(req domain.AnalyzeInvestmentRequest, indicators Econ
 		return utils.EquivalentCDBForTaxFree(req.Rate)
 	case domain.TypeCDB:
 		return req.Rate
+	case domain.TypeTesouroSelic:
+		if indicators.CDI == 0 {
+			return 0
+		}
+		return (tesouroSelicNominalRate(req, indicators) / indicators.CDI) * 100
 	case domain.TypeTesouroPrefixado:
 		if indicators.CDI == 0 {
 			return 0
@@ -148,6 +164,11 @@ func calculateEquivalentCDI(req domain.AnalyzeInvestmentRequest, indicators Econ
 			return (req.Rate / indicators.CDI) * 100
 		}
 		return req.Rate
+	case domain.TypeTesouroSelic:
+		if indicators.CDI == 0 {
+			return 0
+		}
+		return (tesouroSelicNominalRate(req, indicators) / indicators.CDI) * 100
 	case domain.TypeTesouroPrefixado:
 		if indicators.CDI == 0 {
 			return 0
@@ -166,6 +187,8 @@ func calculateEquivalentCDI(req domain.AnalyzeInvestmentRequest, indicators Econ
 
 func calculateRealReturn(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
 	switch req.Type {
+	case domain.TypeTesouroSelic:
+		return utils.RealReturn(tesouroSelicNominalRate(req, indicators), indicators.IPCA)
 	case domain.TypeTesouroIPCA:
 		return req.Rate
 	default:
@@ -219,4 +242,8 @@ func calculateScore(classification string, req domain.AnalyzeInvestmentRequest, 
 		return 0
 	}
 	return score
+}
+
+func tesouroSelicNominalRate(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
+	return indicators.SELIC + req.Rate
 }
