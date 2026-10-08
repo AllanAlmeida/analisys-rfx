@@ -3,7 +3,7 @@ package service
 import (
 	"testing"
 
-	"anlisys-rfx/internal/domain"
+	"investment-analyzer/internal/domain"
 )
 
 func assertParsedItem(t *testing.T, item domain.AnalyzeInvestmentRequest, expectedType string, expectedRate float64, expectedIndex string, expectedModality string, expectedIssuer string, expectedMaturity string) {

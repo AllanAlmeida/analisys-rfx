@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"anlisys-rfx/internal/domain"
-	"anlisys-rfx/internal/service"
+	"investment-analyzer/internal/domain"
+	"investment-analyzer/internal/service"
 )
 
 type InvestmentHandler struct {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"anlisys-rfx/internal/domain"
+	"investment-analyzer/internal/domain"
 )
 
 var (

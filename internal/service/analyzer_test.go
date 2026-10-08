@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"anlisys-rfx/internal/domain"
+	"investment-analyzer/internal/domain"
 )
 
 type economyServiceMock struct {

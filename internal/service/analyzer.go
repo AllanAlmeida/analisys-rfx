@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"anlisys-rfx/internal/domain"
-	"anlisys-rfx/pkg/utils"
+	"investment-analyzer/internal/domain"
+	"investment-analyzer/pkg/utils"
 )
 
 type AnalyzerService struct {

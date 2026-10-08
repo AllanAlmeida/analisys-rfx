@@ -1,4 +1,4 @@
-module anlisys-rfx
+module investment-analyzer
 
 go 1.27.2
 

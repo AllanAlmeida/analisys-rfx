@@ -9,9 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"anlisys-rfx/internal/handler"
-	"anlisys-rfx/internal/router"
-	"anlisys-rfx/internal/service"
+	"investment-analyzer/internal/handler"
+	"investment-analyzer/internal/router"
+	"investment-analyzer/internal/service"
 )
 
 func main() {
