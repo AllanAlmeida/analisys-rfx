@@ -14,7 +14,12 @@ func New(investmentHandler *handler.InvestmentHandler) http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// ClientIPFromRemoteAddr em vez de RealIP: o RealIP foi depreciado no chi
+	// 5.3.0 por ser vulneravel a IP spoofing — ele sobrescreve r.RemoteAddr com
+	// o valor de X-Forwarded-For, True-Client-IP ou X-Real-IP, venham de onde
+	// vierem. Este servico nao fica atras de um proxy conhecido, entao o IP
+	// confiavel e o do proprio socket. Leia-o com middleware.GetClientIP(ctx).
+	r.Use(middleware.ClientIPFromRemoteAddr)
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(15 * time.Second))
