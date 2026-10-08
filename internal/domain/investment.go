@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"time"
 )
@@ -95,6 +96,57 @@ func (r *AnalyzeInvestmentRequest) Normalize() {
 	r.Issuer = strings.TrimSpace(r.Issuer)
 }
 
+// comboIndice e uma combinacao valida de indice e modalidade para um tipo de
+// investimento. modalidadeDefault e aplicada quando o request nao traz
+// modalidade, e modalidadesOK lista as aceitas para esse indice.
+type comboIndice struct {
+	indice            string
+	modalidadeDefault string
+	modalidadesOK     []string
+}
+
+// regraValidacao reune os combos de um tipo. O primeiro combo define o indice
+// aplicado quando o request nao traz nenhum.
+type regraValidacao struct {
+	combos []comboIndice
+}
+
+func (regra regraValidacao) comboDe(indice string) (comboIndice, bool) {
+	for _, combo := range regra.combos {
+		if combo.indice == indice {
+			return combo, true
+		}
+	}
+
+	return comboIndice{}, false
+}
+
+// Acrescentar um tipo de investimento e acrescentar uma entrada aqui.
+var regrasValidacao = map[string]regraValidacao{
+	TypeCDB: {combos: []comboIndice{
+		{indice: IndexCDI, modalidadeDefault: ModalityPOS, modalidadesOK: []string{ModalityPOS}},
+	}},
+	// LCI e LCA aceitam dois indices, cada um com a sua modalidade.
+	TypeLCI: {combos: comboLetraDeCredito},
+	TypeLCA: {combos: comboLetraDeCredito},
+	TypeTesouroSelic: {combos: []comboIndice{
+		{indice: IndexSELIC, modalidadeDefault: ModalityPOS, modalidadesOK: []string{ModalityPOS}},
+	}},
+	TypeTesouroPrefixado: {combos: []comboIndice{
+		{indice: IndexPrefixado, modalidadeDefault: ModalityPRE, modalidadesOK: []string{ModalityPRE}},
+	}},
+	TypeTesouroIPCA: {combos: []comboIndice{
+		{indice: IndexIPCA, modalidadeDefault: ModalityIPCA, modalidadesOK: []string{ModalityIPCA}},
+	}},
+}
+
+var comboLetraDeCredito = []comboIndice{
+	{indice: IndexCDI, modalidadeDefault: ModalityPOS, modalidadesOK: []string{ModalityPOS}},
+	{indice: IndexPrefixado, modalidadeDefault: ModalityPRE, modalidadesOK: []string{ModalityPRE}},
+}
+
+// Validate preenche os defaults de indice e modalidade no proprio request e
+// devolve o primeiro erro encontrado.
 func (r *AnalyzeInvestmentRequest) Validate() error {
 	if strings.TrimSpace(r.Type) == "" {
 		return ErrTypeRequired
@@ -103,85 +155,46 @@ func (r *AnalyzeInvestmentRequest) Validate() error {
 		return ErrRateInvalid
 	}
 
-	switch r.Type {
-	case TypeCDB:
-		if r.Index == "" {
-			r.Index = IndexCDI
-		}
-		if r.Index != IndexCDI {
-			return ErrInvalidIndex
-		}
-		if r.Modality == "" {
-			r.Modality = ModalityPOS
-		}
-		if r.Modality != ModalityPOS {
-			return ErrInvalidModality
-		}
-	case TypeLCI, TypeLCA:
-		if r.Index == "" {
-			r.Index = IndexCDI
-		}
-		if r.Modality == "" {
-			if r.Index == IndexPrefixado {
-				r.Modality = ModalityPRE
-			} else {
-				r.Modality = ModalityPOS
-			}
-		}
-		if (r.Index == IndexCDI && r.Modality != ModalityPOS) ||
-			(r.Index == IndexPrefixado && r.Modality != ModalityPRE) {
-			return ErrInvalidModality
-		}
-		if r.Index != IndexCDI && r.Index != IndexPrefixado {
-			return ErrInvalidIndex
-		}
-	case TypeTesouroPrefixado:
-		if r.Index == "" {
-			r.Index = IndexPrefixado
-		}
-		if r.Index != IndexPrefixado {
-			return ErrInvalidIndex
-		}
-		if r.Modality == "" {
-			r.Modality = ModalityPRE
-		}
-		if r.Modality != ModalityPRE {
-			return ErrInvalidModality
-		}
-	case TypeTesouroSelic:
-		if r.Index == "" {
-			r.Index = IndexSELIC
-		}
-		if r.Index != IndexSELIC {
-			return ErrInvalidIndex
-		}
-		if r.Modality == "" {
-			r.Modality = ModalityPOS
-		}
-		if r.Modality != ModalityPOS {
-			return ErrInvalidModality
-		}
-	case TypeTesouroIPCA:
-		if r.Index == "" {
-			r.Index = IndexIPCA
-		}
-		if r.Index != IndexIPCA {
-			return ErrInvalidIndex
-		}
-		if r.Modality == "" {
-			r.Modality = ModalityIPCA
-		}
-		if r.Modality != ModalityIPCA {
-			return ErrInvalidModality
-		}
-	default:
+	regra, suportado := regrasValidacao[r.Type]
+	if !suportado {
 		return ErrUnsupportedType
 	}
 
-	if r.MaturityDate != "" {
-		if _, err := time.Parse(time.DateOnly, r.MaturityDate); err != nil {
-			return ErrInvalidMaturityDate
-		}
+	if err := regra.aplicarA(r); err != nil {
+		return err
+	}
+
+	return r.validarVencimento()
+}
+
+func (regra regraValidacao) aplicarA(r *AnalyzeInvestmentRequest) error {
+	if r.Index == "" {
+		r.Index = regra.combos[0].indice
+	}
+
+	combo, valido := regra.comboDe(r.Index)
+	if !valido {
+		return ErrInvalidIndex
+	}
+
+	if r.Modality == "" {
+		r.Modality = combo.modalidadeDefault
+	}
+
+	if !slices.Contains(combo.modalidadesOK, r.Modality) {
+		return ErrInvalidModality
+	}
+
+	return nil
+}
+
+func (r *AnalyzeInvestmentRequest) validarVencimento() error {
+	if r.MaturityDate == "" {
+		return nil
+	}
+
+	if _, err := time.Parse(time.DateOnly, r.MaturityDate); err != nil {
+		return ErrInvalidMaturityDate
 	}
 
 	return nil
