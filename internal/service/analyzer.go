@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	"fmt"
+	"math"
 	"strings"
 
 	"investment-analyzer/internal/domain"
@@ -51,76 +51,128 @@ func (s *AnalyzerService) Analyze(ctx context.Context, req domain.AnalyzeInvestm
 	}, nil
 }
 
-func classify(req domain.AnalyzeInvestmentRequest, equivalentCDI float64) (string, string) {
-	switch strings.ToUpper(req.Type) {
-	case domain.TypeCDB:
-		if req.Rate >= 120 {
-			return domain.ClassificationExceptional, "CDB com 120% ou mais do CDI"
-		}
-		if req.Rate >= 105 {
-			return domain.ClassificationGood, "CDB entre 105% e 119% do CDI"
-		}
-		if req.Rate >= 100 {
-			return domain.ClassificationAcceptable, "CDB entre 100% e 104% do CDI"
-		}
-		return domain.ClassificationWeak, "CDB abaixo de 100% do CDI"
-	case domain.TypeLCI, domain.TypeLCA:
-		if equivalentCDI >= 100 {
-			return domain.ClassificationExceptional, fmt.Sprintf("%s com 100%% ou mais do CDI", req.Type)
-		}
-		if equivalentCDI >= 90 {
-			if req.Index == domain.IndexPrefixado {
-				return domain.ClassificationGood, fmt.Sprintf("%s pre-fixado equivalente entre 90%% e 99%% do CDI", req.Type)
-			}
-			return domain.ClassificationGood, fmt.Sprintf("%s entre 90%% e 99%% do CDI", req.Type)
-		}
-		if equivalentCDI >= 85 {
-			if req.Index == domain.IndexPrefixado {
-				return domain.ClassificationAcceptable, fmt.Sprintf("%s pre-fixado equivalente entre 85%% e 89%% do CDI", req.Type)
-			}
-			return domain.ClassificationAcceptable, fmt.Sprintf("%s entre 85%% e 89%% do CDI", req.Type)
-		}
-		if req.Index == domain.IndexPrefixado {
-			return domain.ClassificationWeak, fmt.Sprintf("%s pre-fixado equivalente abaixo de 85%% do CDI", req.Type)
-		}
-		return domain.ClassificationWeak, fmt.Sprintf("%s abaixo de 85%% do CDI", req.Type)
-	case domain.TypeTesouroSelic:
-		if req.Rate >= 0.15 {
-			return domain.ClassificationExceptional, "Tesouro Selic com spread >= 0.15% a.a."
-		}
-		if req.Rate >= 0.05 {
-			return domain.ClassificationGood, "Tesouro Selic com spread entre 0.05% e 0.14% a.a."
-		}
-		if req.Rate >= 0 {
-			return domain.ClassificationAcceptable, "Tesouro Selic com spread entre 0.00% e 0.04% a.a."
-		}
-		return domain.ClassificationWeak, "Tesouro Selic com spread abaixo de 0.00% a.a."
-	case domain.TypeTesouroPrefixado:
-		if req.Rate >= 15.5 {
-			return domain.ClassificationExceptional, "Tesouro Prefixado com taxa >= 15.5%"
-		}
-		if req.Rate >= 14.5 {
-			return domain.ClassificationGood, "Tesouro Prefixado entre 14.5% e 15.4%"
-		}
-		if req.Rate >= 13.5 {
-			return domain.ClassificationAcceptable, "Tesouro Prefixado entre 13.5% e 14.4%"
-		}
-		return domain.ClassificationWeak, "Tesouro Prefixado abaixo de 13.5%"
-	case domain.TypeTesouroIPCA:
-		if req.Rate >= 6.5 {
-			return domain.ClassificationExceptional, "Tesouro IPCA+ com taxa real >= 6.5%"
-		}
-		if req.Rate >= 5.8 {
-			return domain.ClassificationGood, "Tesouro IPCA+ entre 5.8% e 6.4%"
-		}
-		if req.Rate >= 5.0 {
-			return domain.ClassificationAcceptable, "Tesouro IPCA+ entre 5.0% e 5.7%"
-		}
-		return domain.ClassificationWeak, "Tesouro IPCA+ abaixo de 5.0%"
-	default:
-		return domain.ClassificationWeak, "Tipo de investimento nao suportado"
-	}
+// faixaClassificacao e uma fronteira: valor >= min resulta na classificacao e
+// na descricao correspondentes. As faixas de cada tipo ficam em ordem
+// decrescente de min, e a ultima usa math.Inf(-1) para servir de fallback.
+type faixaClassificacao struct {
+	min          float64
+	classe       string
+	descricao    string
+	descricaoPre string // usada quando o indice e PREFIXADO; vazia = usa descricao
 }
+
+// regraClassificacao descreve como classificar um tipo de investimento: de onde
+// sai o valor comparado e quais sao as faixas.
+type regraClassificacao struct {
+	// prefixaTipo indica que a descricao comeca com o tipo ("LCI entre ...").
+	prefixaTipo bool
+	valor       func(req domain.AnalyzeInvestmentRequest, equivalentCDI float64) float64
+	faixas      []faixaClassificacao
+}
+
+func (r regraClassificacao) descricaoDa(faixa faixaClassificacao, req domain.AnalyzeInvestmentRequest) string {
+	texto := faixa.descricao
+	if faixa.descricaoPre != "" && req.Index == domain.IndexPrefixado {
+		texto = faixa.descricaoPre
+	}
+
+	if r.prefixaTipo {
+		return req.Type + " " + texto
+	}
+
+	return texto
+}
+
+func valorTaxa(req domain.AnalyzeInvestmentRequest, _ float64) float64 {
+	return req.Rate
+}
+
+func valorEquivalenteCDI(_ domain.AnalyzeInvestmentRequest, equivalentCDI float64) float64 {
+	return equivalentCDI
+}
+
+// Acrescentar um tipo de investimento e acrescentar uma entrada aqui.
+var regrasClassificacao = map[string]regraClassificacao{
+	domain.TypeCDB: {
+		valor: valorTaxa,
+		faixas: []faixaClassificacao{
+			{min: 120, classe: domain.ClassificationExceptional, descricao: "CDB com 120% ou mais do CDI"},
+			{min: 105, classe: domain.ClassificationGood, descricao: "CDB entre 105% e 119% do CDI"},
+			{min: 100, classe: domain.ClassificationAcceptable, descricao: "CDB entre 100% e 104% do CDI"},
+			{min: math.Inf(-1), classe: domain.ClassificationWeak, descricao: "CDB abaixo de 100% do CDI"},
+		},
+	},
+	domain.TypeLCI: regraLetraDeCredito,
+	domain.TypeLCA: regraLetraDeCredito,
+	domain.TypeTesouroSelic: {
+		valor: valorTaxa,
+		faixas: []faixaClassificacao{
+			{min: 0.15, classe: domain.ClassificationExceptional, descricao: "Tesouro Selic com spread >= 0.15% a.a."},
+			{min: 0.05, classe: domain.ClassificationGood, descricao: "Tesouro Selic com spread entre 0.05% e 0.14% a.a."},
+			{min: 0, classe: domain.ClassificationAcceptable, descricao: "Tesouro Selic com spread entre 0.00% e 0.04% a.a."},
+			{min: math.Inf(-1), classe: domain.ClassificationWeak, descricao: "Tesouro Selic com spread abaixo de 0.00% a.a."},
+		},
+	},
+	domain.TypeTesouroPrefixado: {
+		valor: valorTaxa,
+		faixas: []faixaClassificacao{
+			{min: 15.5, classe: domain.ClassificationExceptional, descricao: "Tesouro Prefixado com taxa >= 15.5%"},
+			{min: 14.5, classe: domain.ClassificationGood, descricao: "Tesouro Prefixado entre 14.5% e 15.4%"},
+			{min: 13.5, classe: domain.ClassificationAcceptable, descricao: "Tesouro Prefixado entre 13.5% e 14.4%"},
+			{min: math.Inf(-1), classe: domain.ClassificationWeak, descricao: "Tesouro Prefixado abaixo de 13.5%"},
+		},
+	},
+	domain.TypeTesouroIPCA: {
+		valor: valorTaxa,
+		faixas: []faixaClassificacao{
+			{min: 6.5, classe: domain.ClassificationExceptional, descricao: "Tesouro IPCA+ com taxa real >= 6.5%"},
+			{min: 5.8, classe: domain.ClassificationGood, descricao: "Tesouro IPCA+ entre 5.8% e 6.4%"},
+			{min: 5.0, classe: domain.ClassificationAcceptable, descricao: "Tesouro IPCA+ entre 5.0% e 5.7%"},
+			{min: math.Inf(-1), classe: domain.ClassificationWeak, descricao: "Tesouro IPCA+ abaixo de 5.0%"},
+		},
+	},
+}
+
+// LCI e LCA compartilham as mesmas faixas; a descricao recebe o tipo como
+// prefixo e varia quando o papel e pre-fixado.
+var regraLetraDeCredito = regraClassificacao{
+	prefixaTipo: true,
+	valor:       valorEquivalenteCDI,
+	faixas: []faixaClassificacao{
+		{min: 100, classe: domain.ClassificationExceptional,
+			descricao: "com 100% ou mais do CDI"},
+		{min: 90, classe: domain.ClassificationGood,
+			descricao:    "entre 90% e 99% do CDI",
+			descricaoPre: "pre-fixado equivalente entre 90% e 99% do CDI"},
+		{min: 85, classe: domain.ClassificationAcceptable,
+			descricao:    "entre 85% e 89% do CDI",
+			descricaoPre: "pre-fixado equivalente entre 85% e 89% do CDI"},
+		{min: math.Inf(-1), classe: domain.ClassificationWeak,
+			descricao:    "abaixo de 85% do CDI",
+			descricaoPre: "pre-fixado equivalente abaixo de 85% do CDI"},
+	},
+}
+
+func classify(req domain.AnalyzeInvestmentRequest, equivalentCDI float64) (string, string) {
+	regra, conhecido := regrasClassificacao[strings.ToUpper(req.Type)]
+	if !conhecido {
+		return domain.ClassificationWeak, descricaoTipoNaoSuportado
+	}
+
+	valor := regra.valor(req, equivalentCDI)
+
+	for _, faixa := range regra.faixas {
+		if valor >= faixa.min {
+			return faixa.classe, regra.descricaoDa(faixa, req)
+		}
+	}
+
+	// Inalcancavel com faixas bem formadas: a ultima tem min = -Inf. So chega
+	// aqui se valor for NaN.
+	return domain.ClassificationWeak, descricaoTipoNaoSuportado
+}
+
+const descricaoTipoNaoSuportado = "Tipo de investimento nao suportado"
 
 func calculateEquivalentCDB(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators, equivalentCDI float64) float64 {
 	switch req.Type {
