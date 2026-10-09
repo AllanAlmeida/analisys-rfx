@@ -207,7 +207,29 @@ func extractMaturityDate(lines []string) (string, error) {
 	return "", nil
 }
 
+// marcadorModalidade liga um texto encontrado na descricao do produto a um par
+// modalidade/indice. A ordem importa: PRE e POS sao avaliados antes de IPCA,
+// porque uma linha pode conter mais de um marcador.
+type marcadorModalidade struct {
+	termos     []string
+	modalidade string
+	indice     string
+}
+
+var marcadoresModalidade = []marcadorModalidade{
+	{termos: []string{"PRÉ-FIXADO", "PRE-FIXADO"}, modalidade: domain.ModalityPRE, indice: domain.IndexPrefixado},
+	{termos: []string{"PÓS-FIXADO", "POS-FIXADO"}, modalidade: domain.ModalityPOS, indice: domain.IndexCDI},
+	{termos: []string{"IPCA"}, modalidade: domain.ModalityIPCA, indice: domain.IndexIPCA},
+}
+
+// Usado quando nenhum marcador aparece no texto.
+var modalidadePadraoPorTipo = map[string]marcadorModalidade{
+	domain.TypeTesouroPrefixado: {modalidade: domain.ModalityPRE, indice: domain.IndexPrefixado},
+	domain.TypeTesouroIPCA:      {modalidade: domain.ModalityIPCA, indice: domain.IndexIPCA},
+}
+
 func extractModalityAndIndex(lines []string, investmentType string) (string, string) {
+	// Tesouro Selic nao tem variacao: e sempre pos-fixado na Selic.
 	if investmentType == domain.TypeTesouroSelic {
 		return domain.ModalityPOS, domain.IndexSELIC
 	}
@@ -215,23 +237,26 @@ func extractModalityAndIndex(lines []string, investmentType string) (string, str
 	for _, line := range lines {
 		upper := strings.ToUpper(line)
 
-		if strings.Contains(upper, "PRÉ-FIXADO") || strings.Contains(upper, "PRE-FIXADO") {
-			return domain.ModalityPRE, domain.IndexPrefixado
-		}
-		if strings.Contains(upper, "PÓS-FIXADO") || strings.Contains(upper, "POS-FIXADO") {
-			return domain.ModalityPOS, domain.IndexCDI
-		}
-		if strings.Contains(upper, "IPCA") {
-			return domain.ModalityIPCA, domain.IndexIPCA
+		if marcador, achou := marcadorEm(upper); achou {
+			return marcador.modalidade, marcador.indice
 		}
 	}
 
-	switch investmentType {
-	case domain.TypeTesouroPrefixado:
-		return domain.ModalityPRE, domain.IndexPrefixado
-	case domain.TypeTesouroIPCA:
-		return domain.ModalityIPCA, domain.IndexIPCA
-	default:
-		return domain.ModalityPOS, domain.IndexCDI
+	if padrao, temPadrao := modalidadePadraoPorTipo[investmentType]; temPadrao {
+		return padrao.modalidade, padrao.indice
 	}
+
+	return domain.ModalityPOS, domain.IndexCDI
+}
+
+func marcadorEm(linha string) (marcadorModalidade, bool) {
+	for _, marcador := range marcadoresModalidade {
+		for _, termo := range marcador.termos {
+			if strings.Contains(linha, termo) {
+				return marcador, true
+			}
+		}
+	}
+
+	return marcadorModalidade{}, false
 }
