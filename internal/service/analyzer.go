@@ -174,6 +174,43 @@ func classify(req domain.AnalyzeInvestmentRequest, equivalentCDI float64) (strin
 
 const descricaoTipoNaoSuportado = "Tipo de investimento nao suportado"
 
+// percentOfCDI expressa uma taxa nominal anual como percentual do CDI.
+// Devolve 0 quando o CDI nao esta disponivel, em vez de dividir por zero —
+// esse guarda aparecia repetido cinco vezes em cada uma das duas funcoes de
+// equivalencia.
+func percentOfCDI(rate, cdi float64) float64 {
+	if cdi == 0 {
+		return 0
+	}
+
+	return (rate / cdi) * 100
+}
+
+// calculateEquivalentCDI expressa o rendimento do papel como percentual do CDI.
+// Para os papeis que ja sao cotados em percentual do CDI, e a propria taxa.
+func calculateEquivalentCDI(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
+	switch req.Type {
+	case domain.TypeCDB:
+		return req.Rate
+	case domain.TypeLCI, domain.TypeLCA:
+		if req.Index == domain.IndexPrefixado {
+			return percentOfCDI(req.Rate, indicators.CDI)
+		}
+		return req.Rate
+	case domain.TypeTesouroSelic:
+		return percentOfCDI(tesouroSelicNominalRate(req, indicators), indicators.CDI)
+	case domain.TypeTesouroPrefixado:
+		return percentOfCDI(req.Rate, indicators.CDI)
+	case domain.TypeTesouroIPCA:
+		return percentOfCDI(utils.NominalRateFromIPCAPlus(indicators.IPCA, req.Rate), indicators.CDI)
+	default:
+		return 0
+	}
+}
+
+// calculateEquivalentCDB traduz o papel para o percentual do CDI que um CDB
+// precisaria pagar para render o mesmo liquido. LCI e LCA sao isentas de IR,
+// por isso passam por EquivalentCDBForTaxFree.
 func calculateEquivalentCDB(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators, equivalentCDI float64) float64 {
 	switch req.Type {
 	case domain.TypeLCI, domain.TypeLCA:
@@ -181,68 +218,12 @@ func calculateEquivalentCDB(req domain.AnalyzeInvestmentRequest, indicators Econ
 			return utils.EquivalentCDBForTaxFree(equivalentCDI)
 		}
 		return utils.EquivalentCDBForTaxFree(req.Rate)
-	case domain.TypeCDB:
-		return req.Rate
-	case domain.TypeTesouroSelic:
-		if indicators.CDI == 0 {
-			return 0
-		}
-		return (tesouroSelicNominalRate(req, indicators) / indicators.CDI) * 100
-	case domain.TypeTesouroPrefixado:
-		if indicators.CDI == 0 {
-			return 0
-		}
-		return (req.Rate / indicators.CDI) * 100
-	case domain.TypeTesouroIPCA:
-		nominal := utils.NominalRateFromIPCAPlus(indicators.IPCA, req.Rate)
-		if indicators.CDI == 0 {
-			return 0
-		}
-		return (nominal / indicators.CDI) * 100
 	default:
-		return 0
+		// Para os demais, o equivalente em CDB e o proprio equivalente em CDI.
+		return calculateEquivalentCDI(req, indicators)
 	}
 }
 
-func calculateEquivalentCDI(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
-	switch req.Type {
-	case domain.TypeCDB:
-		return req.Rate
-	case domain.TypeLCI, domain.TypeLCA:
-		if req.Index == domain.IndexPrefixado {
-			if indicators.CDI == 0 {
-				return 0
-			}
-			return (req.Rate / indicators.CDI) * 100
-		}
-		return req.Rate
-	case domain.TypeTesouroSelic:
-		if indicators.CDI == 0 {
-			return 0
-		}
-		return (tesouroSelicNominalRate(req, indicators) / indicators.CDI) * 100
-	case domain.TypeTesouroPrefixado:
-		if indicators.CDI == 0 {
-			return 0
-		}
-		return (req.Rate / indicators.CDI) * 100
-	case domain.TypeTesouroIPCA:
-		nominal := utils.NominalRateFromIPCAPlus(indicators.IPCA, req.Rate)
-		if indicators.CDI == 0 {
-			return 0
-		}
-		return (nominal / indicators.CDI) * 100
-	default:
-		return 0
-	}
-}
-
-// nominalRate devolve a taxa nominal anual do papel.
-//
-// Para CDB, LCI e LCA pos-fixados, req.Rate e um *percentual do CDI* (120
-// significa 120% do CDI), nao uma taxa anual: a taxa nominal e CDI * rate/100.
-// Tratar os dois como a mesma coisa era a origem de real_return absurdo — um
-// CDB a 120% do CDI aparecia com 128% de retorno real.
 func nominalRate(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
 	switch req.Type {
 	case domain.TypeTesouroSelic:
@@ -270,52 +251,85 @@ func calculateRealReturn(req domain.AnalyzeInvestmentRequest, indicators Economy
 	return utils.RealReturn(nominalRate(req, indicators), indicators.IPCA)
 }
 
-func calculateScore(classification string, req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
-	base := map[string]float64{
+// faixaBonus acrescenta bonus ao score quando o valor avaliado alcanca min.
+// As faixas ficam em ordem decrescente e apenas a primeira que casar e aplicada.
+type faixaBonus struct {
+	min   float64
+	bonus float64
+}
+
+var (
+	pontuacaoBase = map[string]float64{
 		domain.ClassificationExceptional: 9.5,
 		domain.ClassificationGood:        8.0,
 		domain.ClassificationAcceptable:  6.5,
 		domain.ClassificationWeak:        4.0,
-	}[classification]
+	}
 
+	bonusPorTaxa = []faixaBonus{
+		{min: 120, bonus: 0.5},
+		{min: 110, bonus: 0.3},
+		{min: 100, bonus: 0.1},
+	}
+
+	bonusPorRetornoReal = []faixaBonus{
+		{min: 6, bonus: 0.3},
+		{min: 4, bonus: 0.2},
+		{min: 2, bonus: 0.1},
+	}
+
+	// Papeis cotados em percentual do CDI concorrem ao bonus por taxa.
+	concorreAoBonusPorTaxa = map[string]bool{
+		domain.TypeCDB: true,
+		domain.TypeLCI: true,
+		domain.TypeLCA: true,
+	}
+
+	// LCI e LCA sao isentas de imposto de renda para pessoa fisica.
+	isentoDeIR = map[string]bool{
+		domain.TypeLCI: true,
+		domain.TypeLCA: true,
+	}
+)
+
+const bonusIsencaoIR = 0.2
+
+func bonusDe(valor float64, faixas []faixaBonus) float64 {
+	for _, faixa := range faixas {
+		if valor >= faixa.min {
+			return faixa.bonus
+		}
+	}
+
+	return 0
+}
+
+func calculateScore(classification string, req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
+	// Os bonus sao somados entre si antes de entrar na base: acumular direto no
+	// score daria um resultado diferente no ultimo bit.
 	extra := 0.0
 
-	if req.Type == domain.TypeCDB || req.Type == domain.TypeLCI || req.Type == domain.TypeLCA {
-		baseRate := req.Rate
-		if req.Index == domain.IndexPrefixado {
-			baseRate = calculateEquivalentCDI(req, indicators)
-		}
-
-		if baseRate >= 120 {
-			extra += 0.5
-		} else if baseRate >= 110 {
-			extra += 0.3
-		} else if baseRate >= 100 {
-			extra += 0.1
-		}
+	if concorreAoBonusPorTaxa[req.Type] {
+		extra += bonusDe(taxaBaseDoBonus(req, indicators), bonusPorTaxa)
 	}
 
-	realReturn := calculateRealReturn(req, indicators)
-	if realReturn >= 6 {
-		extra += 0.3
-	} else if realReturn >= 4 {
-		extra += 0.2
-	} else if realReturn >= 2 {
-		extra += 0.1
+	extra += bonusDe(calculateRealReturn(req, indicators), bonusPorRetornoReal)
+
+	if isentoDeIR[req.Type] {
+		extra += bonusIsencaoIR
 	}
 
-	if req.Type == domain.TypeLCI || req.Type == domain.TypeLCA {
-		extra += 0.2
+	return min(max(pontuacaoBase[classification]+extra, 0), 10)
+}
+
+// taxaBaseDoBonus devolve a taxa comparada com bonusPorTaxa. Papel pre-fixado
+// informa taxa anual, entao precisa ser traduzido para percentual do CDI antes.
+func taxaBaseDoBonus(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
+	if req.Index == domain.IndexPrefixado {
+		return calculateEquivalentCDI(req, indicators)
 	}
 
-	score := base + extra
-	if score > 10 {
-		return 10
-	}
-	if score < 0 {
-		return 0
-	}
-	return score
+	return req.Rate
 }
 
 func tesouroSelicNominalRate(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
