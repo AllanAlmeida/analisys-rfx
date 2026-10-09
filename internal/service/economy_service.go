@@ -21,8 +21,14 @@ type EconomyIndicators struct {
 }
 
 const (
-	monthlyPeriodsPerYear = 12
-	businessDaysPerYear   = 252
+	businessDaysPerYear = 252
+)
+
+// Series temporais do SGS/Banco Central.
+const (
+	serieSELICMetaAnual = 432   // meta Selic definida pelo Copom, % a.a.
+	serieIPCAAcum12m    = 13522 // IPCA acumulado em 12 meses, % a.a.
+	serieCDIDiario      = 12    // CDI, % ao dia util
 )
 
 type EconomyService interface {
@@ -63,24 +69,25 @@ func (s *BCBEconomyService) GetIndicators(ctx context.Context) (EconomyIndicator
 		return s.indicators, nil
 	}
 
-	selic, err := s.fetchLatestValue(ctx, 432)
+	selic, err := s.fetchLatestValue(ctx, serieSELICMetaAnual)
 	if err != nil {
 		return EconomyIndicators{}, fmt.Errorf("failed to fetch SELIC: %w", err)
 	}
 
-	ipca, err := s.fetchLatestValue(ctx, 433)
+	ipca, err := s.fetchLatestValue(ctx, serieIPCAAcum12m)
 	if err != nil {
 		return EconomyIndicators{}, fmt.Errorf("failed to fetch IPCA: %w", err)
 	}
 
-	cdi, err := s.fetchLatestValue(ctx, 12)
+	cdi, err := s.fetchLatestValue(ctx, serieCDIDiario)
 	if err != nil {
 		return EconomyIndicators{}, fmt.Errorf("failed to fetch CDI: %w", err)
 	}
 
 	s.indicators = EconomyIndicators{
-		SELIC: normalizeSELIC(selic),
-		IPCA:  annualizePeriodicRate(ipca, monthlyPeriodsPerYear),
+		// SELIC e IPCA ja vem em base anual; so o CDI e diario.
+		SELIC: selic,
+		IPCA:  ipca,
 		CDI:   annualizePeriodicRate(cdi, businessDaysPerYear),
 	}
 	s.cachedAt = time.Now()
@@ -126,10 +133,6 @@ func (s *BCBEconomyService) fetchLatestValue(ctx context.Context, seriesCode int
 	}
 
 	return value, nil
-}
-
-func normalizeSELIC(value float64) float64 {
-	return value
 }
 
 func annualizePeriodicRate(periodicRate float64, periodsPerYear float64) float64 {

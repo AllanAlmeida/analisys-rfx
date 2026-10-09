@@ -237,15 +237,37 @@ func calculateEquivalentCDI(req domain.AnalyzeInvestmentRequest, indicators Econ
 	}
 }
 
-func calculateRealReturn(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
+// nominalRate devolve a taxa nominal anual do papel.
+//
+// Para CDB, LCI e LCA pos-fixados, req.Rate e um *percentual do CDI* (120
+// significa 120% do CDI), nao uma taxa anual: a taxa nominal e CDI * rate/100.
+// Tratar os dois como a mesma coisa era a origem de real_return absurdo — um
+// CDB a 120% do CDI aparecia com 128% de retorno real.
+func nominalRate(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
 	switch req.Type {
 	case domain.TypeTesouroSelic:
-		return utils.RealReturn(tesouroSelicNominalRate(req, indicators), indicators.IPCA)
-	case domain.TypeTesouroIPCA:
-		return req.Rate
+		return tesouroSelicNominalRate(req, indicators)
+	case domain.TypeCDB:
+		return indicators.CDI * req.Rate / 100
+	case domain.TypeLCI, domain.TypeLCA:
+		// Pre-fixado ja informa a taxa anual; pos-fixado e percentual do CDI.
+		if req.Index == domain.IndexPrefixado {
+			return req.Rate
+		}
+		return indicators.CDI * req.Rate / 100
 	default:
-		return utils.RealReturn(req.Rate, indicators.IPCA)
+		// Tesouro Prefixado informa a taxa anual diretamente.
+		return req.Rate
 	}
+}
+
+func calculateRealReturn(req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {
+	// Tesouro IPCA+ ja e cotado em taxa real, acima da inflacao.
+	if req.Type == domain.TypeTesouroIPCA {
+		return req.Rate
+	}
+
+	return utils.RealReturn(nominalRate(req, indicators), indicators.IPCA)
 }
 
 func calculateScore(classification string, req domain.AnalyzeInvestmentRequest, indicators EconomyIndicators) float64 {

@@ -5,6 +5,11 @@ import (
 	"testing"
 )
 
+// A producao le o IPCA ja acumulado em 12 meses (serie 13522), entao a
+// conversao mes -> ano so e usada aqui, para exercitar annualizePeriodicRate e
+// montar indicadores de teste.
+const monthlyPeriodsPerYear = 12
+
 func TestAnnualizePeriodicRate(t *testing.T) {
 	tests := []struct {
 		name           string
