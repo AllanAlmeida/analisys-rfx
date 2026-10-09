@@ -23,11 +23,19 @@ O serviço também calcula:
 - Retorno real versus inflação
 - Score de investimento de 0 a 10
 
-Os indicadores econômicos (SELIC, IPCA e CDI) são buscados na API do Banco Central e armazenados em cache por 1 hora.
+Os indicadores econômicos são buscados nas séries temporais do SGS/Banco Central e
+armazenados em cache por 1 hora:
+
+| Indicador | Série | Base |
+|---|---|---|
+| SELIC | 432 — meta definida pelo Copom | já anual |
+| IPCA | 13522 — acumulado em 12 meses | já anual |
+| CDI | 12 — taxa diária | anualizado por 252 dias úteis |
 
 ## Stack
 
-- Go
+- Go 1.27
+- `github.com/go-chi/chi/v5` 5.3.2
 - `net/http`
 - `encoding/json`
 - `context`
@@ -44,16 +52,21 @@ Os indicadores econômicos (SELIC, IPCA e CDI) são buscados na API do Banco Cen
 
 ```text
 investment-analyzer/
-├── cmd/api/main.go
-├── internal/domain/investment.go
-├── internal/service/analyzer.go
-├── internal/service/economy_service.go
+├── cmd/api/main.go                      entrypoint e leitura de env
+├── internal/domain/investment.go        tipos, validação e regras por produto
+├── internal/service/analyzer.go         classificação, equivalências e score
+├── internal/service/economy_service.go  cliente do SGS/Banco Central, com cache
+├── internal/service/plaintext_parser.go extração de produtos de texto colado
 ├── internal/handler/investment_handler.go
 ├── internal/router/router.go
-├── pkg/utils/calculator.go
+├── pkg/utils/calculator.go              arredondamento e conversões de taxa
+├── docs/swagger.yaml
 ├── Dockerfile
+├── Makefile
 └── README.md
 ```
+
+Cada pacote tem o seu `_test.go` ao lado.
 
 ## Endpoints
 
@@ -276,15 +289,21 @@ Response:
 
 ## Execução local
 
-Pré-requisito: Go 1.22+
+Pré-requisito: Go 1.27+
 
 ```bash
-go run ./cmd/api
+go run ./cmd/api     # ou: make run
 ```
 
 Variáveis de ambiente:
 
-- `PORT` (default: `8080`)
+| Variável | Default | Para que serve |
+|---|---|---|
+| `PORT` | `8080` | porta HTTP |
+| `MAX_BODY_BYTES` | `1048576` (1 MiB) | teto do corpo da requisição |
+| `MAX_BATCH_ITEMS` | `500` | teto de itens em `POST /analyze/batch` |
+
+Requisição acima de qualquer um dos dois limites responde `400`.
 
 ## Exemplo com curl
 
@@ -424,6 +443,29 @@ curl -X POST http://localhost:8080/analyze \
   -H "Content-Type: application/json" \
   -d '{"type":"Tesouro IPCA+","rate":6.2,"index":"IPCA","modality":"IPCA","maturity_date":"2035-05-15"}'
 ```
+
+## Testes e qualidade
+
+```bash
+make test       # testes com cobertura (imprime o total ao final)
+make coverage   # abre o relatório HTML de cobertura
+make lint       # gofmt -l vazio + go vet
+make race       # go test -race
+make cyclo      # nenhuma função de produção acima de 10 de complexidade
+make vuln       # govulncheck: vulnerabilidades alcançáveis
+make check      # lint + test + cyclo + vuln
+```
+
+O `make cyclo` ignora os `_test.go`: testes table-driven acumulam ramos nas
+asserções, e o alvo é a manutenibilidade do código de produção.
+
+## Como o retorno real é calculado
+
+Para CDB, LCI e LCA pós-fixados, `rate` é um **percentual do CDI** — `120`
+significa 120% do CDI, não 120% ao ano. A taxa nominal anual é derivada
+(`CDI × rate/100`) antes de descontar a inflação. Já LCI/LCA pré-fixadas e
+Tesouro Prefixado informam a taxa anual diretamente, e Tesouro IPCA+ é cotado
+em taxa real, acima da inflação, então o valor passa direto.
 
 ## Docker
 
