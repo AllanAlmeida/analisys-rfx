@@ -15,21 +15,53 @@ import (
 	"investment-analyzer/internal/service"
 )
 
+// Limites de entrada. Sem eles, io.ReadAll e json.Decode leem o corpo inteiro
+// na memoria, e o batch processa quantos itens o cliente mandar.
+const (
+	DefaultMaxBodyBytes  = 1 << 20 // 1 MiB
+	DefaultMaxBatchItems = 500
+)
+
 type InvestmentHandler struct {
 	analyzerService *service.AnalyzerService
+
+	maxBodyBytes  int64
+	maxBatchItems int
 }
 
 func NewInvestmentHandler(analyzerService *service.AnalyzerService) *InvestmentHandler {
 	return &InvestmentHandler{
 		analyzerService: analyzerService,
+		maxBodyBytes:    DefaultMaxBodyBytes,
+		maxBatchItems:   DefaultMaxBatchItems,
 	}
 }
 
-func (h *InvestmentHandler) Analyze(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
+// NewInvestmentHandlerWithLimits permite ajustar os limites de entrada, usado
+// pela configuracao por variavel de ambiente e pelos testes.
+func NewInvestmentHandlerWithLimits(analyzerService *service.AnalyzerService, maxBodyBytes int64, maxBatchItems int) *InvestmentHandler {
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = DefaultMaxBodyBytes
 	}
+	if maxBatchItems <= 0 {
+		maxBatchItems = DefaultMaxBatchItems
+	}
+
+	return &InvestmentHandler{
+		analyzerService: analyzerService,
+		maxBodyBytes:    maxBodyBytes,
+		maxBatchItems:   maxBatchItems,
+	}
+}
+
+// limitarCorpo trunca a leitura do corpo no limite configurado. Passado o
+// limite, a leitura devolve erro em vez de continuar alocando.
+func (h *InvestmentHandler) limitarCorpo(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxBodyBytes)
+}
+
+func (h *InvestmentHandler) Analyze(w http.ResponseWriter, r *http.Request) {
+	h.limitarCorpo(w, r)
 
 	var req domain.AnalyzeInvestmentRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -53,10 +85,7 @@ func (h *InvestmentHandler) Analyze(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *InvestmentHandler) AnalyzeBatch(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
+	h.limitarCorpo(w, r)
 
 	var req domain.AnalyzeBatchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -65,6 +94,11 @@ func (h *InvestmentHandler) AnalyzeBatch(w http.ResponseWriter, r *http.Request)
 	}
 	if len(req.Items) == 0 {
 		writeJSONError(w, http.StatusBadRequest, "field 'items' must contain at least one item")
+		return
+	}
+	if len(req.Items) > h.maxBatchItems {
+		writeJSONError(w, http.StatusBadRequest,
+			fmt.Sprintf("field 'items' must contain at most %d items", h.maxBatchItems))
 		return
 	}
 
@@ -76,10 +110,7 @@ type plainTextBatchPayload struct {
 }
 
 func (h *InvestmentHandler) AnalyzeBatchFromPlainText(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
+	h.limitarCorpo(w, r)
 
 	rawText, err := extractRawPlainTextInput(r)
 	if err != nil {
@@ -106,10 +137,7 @@ func (h *InvestmentHandler) AnalyzeBatchFromPlainText(w http.ResponseWriter, r *
 }
 
 func (h *InvestmentHandler) AnalyzeBatchFromPlainTextCSV(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
+	h.limitarCorpo(w, r)
 
 	rawText, err := extractRawPlainTextInput(r)
 	if err != nil {
@@ -118,6 +146,14 @@ func (h *InvestmentHandler) AnalyzeBatchFromPlainTextCSV(w http.ResponseWriter, 
 	}
 
 	inputItems, parseErrors := service.ParsePlainTextBatch(rawText)
+	if len(inputItems) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":        "no valid products found in plain text",
+			"parse_errors": parseErrors,
+		})
+		return
+	}
+
 	batch := h.analyzeItems(r, inputItems)
 
 	csvBytes, err := buildBatchCSV(batch, parseErrors)
@@ -249,19 +285,19 @@ func buildBatchCSV(batch domain.AnalyzeBatchResponse, parseErrors []string) ([]b
 	for _, item := range batch.Items {
 		row := []string{
 			strconv.Itoa(item.Index),
-			item.Input.Type,
-			item.Input.Issuer,
+			neutralizarFormula(item.Input.Type),
+			neutralizarFormula(item.Input.Issuer),
 			formatFloat(item.Input.Rate),
-			item.Input.Index,
-			item.Input.Modality,
-			item.Input.MaturityDate,
+			neutralizarFormula(item.Input.Index),
+			neutralizarFormula(item.Input.Modality),
+			neutralizarFormula(item.Input.MaturityDate),
 			"",
 			"",
 			"",
 			"",
 			"",
 			"",
-			item.Error,
+			neutralizarFormula(item.Error),
 		}
 
 		if item.Result != nil {
@@ -270,8 +306,7 @@ func buildBatchCSV(batch domain.AnalyzeBatchResponse, parseErrors []string) ([]b
 			row[9] = formatFloat(item.Result.EquivalentCDB)
 			row[10] = formatFloat(item.Result.EquivalentCDIReturn)
 			row[11] = formatFloat(item.Result.RealReturn)
-			row[12] = item.Result.Description
-			row[13] = ""
+			row[12] = neutralizarFormula(item.Result.Description)
 		}
 
 		if err := writer.Write(row); err != nil {
@@ -283,7 +318,7 @@ func buildBatchCSV(batch domain.AnalyzeBatchResponse, parseErrors []string) ([]b
 		_ = writer.Write([]string{})
 		_ = writer.Write([]string{"parse_errors"})
 		for _, parseErr := range parseErrors {
-			_ = writer.Write([]string{parseErr})
+			_ = writer.Write([]string{neutralizarFormula(parseErr)})
 		}
 	}
 
@@ -297,4 +332,23 @@ func buildBatchCSV(batch domain.AnalyzeBatchResponse, parseErrors []string) ([]b
 
 func formatFloat(v float64) string {
 	return strconv.FormatFloat(v, 'f', 2, 64)
+}
+
+// Caracteres que fazem Excel, LibreOffice e Google Sheets interpretarem a
+// celula como formula em vez de texto.
+const prefixosDeFormula = "=+-@\t\r"
+
+// neutralizarFormula protege contra injecao de CSV (CWE-1236). O conteudo das
+// celulas vem do request, e a resposta e servida com Content-Disposition:
+// attachment, ou seja, abre direto na planilha de quem baixa. Um issuer como
+// `=cmd|'/c calc'!A1` seria executado ao abrir o arquivo.
+//
+// O prefixo com apostrofo e a convencao que as planilhas reconhecem para
+// "trate isto como texto".
+func neutralizarFormula(valor string) string {
+	if valor == "" || !strings.ContainsRune(prefixosDeFormula, rune(valor[0])) {
+		return valor
+	}
+
+	return "'" + valor
 }

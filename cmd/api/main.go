@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -13,6 +14,23 @@ import (
 	"investment-analyzer/internal/router"
 	"investment-analyzer/internal/service"
 )
+
+// intFromEnv le um inteiro da variavel de ambiente, caindo no padrao quando
+// ela esta ausente ou invalida.
+func intFromEnv(nome string, padrao int64) int64 {
+	bruto := os.Getenv(nome)
+	if bruto == "" {
+		return padrao
+	}
+
+	valor, err := strconv.ParseInt(bruto, 10, 64)
+	if err != nil || valor <= 0 {
+		log.Printf("%s invalido (%q), usando %d", nome, bruto, padrao)
+		return padrao
+	}
+
+	return valor
+}
 
 func main() {
 	port := os.Getenv("PORT")
@@ -22,7 +40,11 @@ func main() {
 
 	economyService := service.NewBCBEconomyService(1 * time.Hour)
 	analyzerService := service.NewAnalyzerService(economyService)
-	investmentHandler := handler.NewInvestmentHandler(analyzerService)
+	investmentHandler := handler.NewInvestmentHandlerWithLimits(
+		analyzerService,
+		intFromEnv("MAX_BODY_BYTES", handler.DefaultMaxBodyBytes),
+		int(intFromEnv("MAX_BATCH_ITEMS", handler.DefaultMaxBatchItems)),
+	)
 	r := router.New(investmentHandler)
 
 	server := &http.Server{
