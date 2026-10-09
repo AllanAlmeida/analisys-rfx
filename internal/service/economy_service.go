@@ -36,7 +36,10 @@ type EconomyService interface {
 }
 
 type BCBEconomyService struct {
-	client   *http.Client
+	client *http.Client
+	// baseURL e campo, e nao a constante direto, para que os testes possam
+	// apontar para um httptest.Server em vez da API do Banco Central.
+	baseURL  string
 	cacheTTL time.Duration
 
 	mu         sync.RWMutex
@@ -49,6 +52,7 @@ func NewBCBEconomyService(cacheTTL time.Duration) *BCBEconomyService {
 		client: &http.Client{
 			Timeout: 8 * time.Second,
 		},
+		baseURL:  bcbBaseURL,
 		cacheTTL: cacheTTL,
 	}
 }
@@ -101,7 +105,7 @@ type bcbEntry struct {
 }
 
 func (s *BCBEconomyService) fetchLatestValue(ctx context.Context, seriesCode int) (float64, error) {
-	url := fmt.Sprintf("%s.%d/dados/ultimos/1?formato=json", bcbBaseURL, seriesCode)
+	url := fmt.Sprintf("%s.%d/dados/ultimos/1?formato=json", s.baseURL, seriesCode)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err
