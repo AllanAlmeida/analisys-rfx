@@ -1,4 +1,6 @@
 BINARY=bin/application
+# Versao do go.mod, usada para fixar o toolchain das ferramentas externas.
+GO_VERSION=$(shell sed -n 's/^go //p' go.mod)
 COVERAGE_FILE=coverage.out
 REPORT_FILE=report.out
 GO_TEST_ENV=GOCACHE=/tmp/go-cache GOTMPDIR=/tmp/go-tmp
@@ -41,9 +43,15 @@ cyclo:
 		&& echo "nenhuma funcao de producao acima de 10"
 
 # Vulnerabilidades alcancaveis a partir deste codigo.
+#
+# GOTOOLCHAIN fixo e necessario: o x/vuln exige Go >= 1.26, entao `go run`
+# escolhe o 1.26 para compilar a ferramenta, e um govulncheck compilado com
+# 1.26 recusa analisar um modulo que pede 1.27 ("package requires newer Go
+# version"). Fixando no que o go.mod declara, a ferramenta e o modulo usam a
+# mesma versao.
 .PHONY: vuln
 vuln:
-	@ go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+	@ GOTOOLCHAIN=go${GO_VERSION} go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 .PHONY: check
 check: lint test cyclo vuln
