@@ -1,0 +1,15 @@
+# Avisa sobre novas versoes e vulnerabilidades. Nao ha workflow de CI aqui; a
+# verificacao equivalente roda localmente com `make check`.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
